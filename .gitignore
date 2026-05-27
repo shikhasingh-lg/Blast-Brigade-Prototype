@@ -1,0 +1,13 @@
+# Godot 4 editor/import cache (regenerated on open)
+.godot/
+*.pck
+*.translation
+
+# OS / misc
+.DS_Store
+*.zip
+
+# Pop Brigade fork leftover — Blast Brigade removed the bubble wall, so these
+# ~41 MB of bubble textures are never loaded in normal play (MatchScene.gd:595,617).
+# Excluded to keep the repo lean. Revive if the bubble mechanic ever returns.
+godot/assets/bubbles/
