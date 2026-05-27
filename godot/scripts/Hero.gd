@@ -326,15 +326,19 @@ func _fire_yellow(target: Enemy) -> void:
 	_vfx_arrow(target.global_position, is_execute)
 	target.take_damage(dmg)
 
-# ─── Druid (GREEN) ─ green pulse wedge to target + chain-heal nearest wounded
-# allies (v1 §8.4 — 5 HP each, 15/sec cap, up to 2 targets).
+# ─── Druid (GREEN) ─ lobs a leaf-wrapped seed pod that arcs to the target and
+# bursts into a green poison puff. Damage + chain-heal land on impact.
 func _fire_green(target: Enemy) -> void:
 	if not is_instance_valid(target):
 		return
-	var dir: Vector2 = (target.global_position - global_position).normalized()
-	_vfx_wedge(dir, 95.0, 30.0, Color(0.45, 1.0, 0.55, 0.45), 0.18)
-	target.take_damage(_damage_for_hit(target, GameConfig.green_dmg_mult))
-	_green_chain_heal()
+	var impact_world: Vector2 = target.global_position
+	var target_ref: Enemy = target
+	_vfx_seed_pod(impact_world, func():
+		_vfx_poison_puff(impact_world)
+		if is_instance_valid(target_ref) and target_ref.hp > 0.0:
+			target_ref.take_damage(_damage_for_hit(target_ref, GameConfig.green_dmg_mult))
+		_green_chain_heal()
+	)
 
 func _green_chain_heal() -> void:
 	var p: Node = get_parent()
@@ -356,24 +360,39 @@ func _green_chain_heal() -> void:
 	for entry in candidates:
 		if healed >= max_targets:
 			break
-		(entry.h as Hero).try_heal(amount, cap)
+		var ally: Hero = entry.h as Hero
+		var ticked: int = ally.try_heal(amount, cap)
+		if ticked > 0:
+			_vfx_heal_motes(ally.global_position)
 		healed += 1
 
-# ─── Wizard (PURPLE) ─ wider smash wedge + every-Nth arcane burst (AoE ring +
-# damage to everyone in radius around the target). v1 §8.6.
+# ─── Wizard (PURPLE) ─ fires a glowing purple arcane orb straight at the
+# target. Every Nth shot is a "burst" orb (bigger, brighter) that triggers an
+# AoE ring on impact. v1 §8.6.
 func _fire_purple(target: Enemy) -> void:
 	if not is_instance_valid(target):
 		return
-	var dir: Vector2 = (target.global_position - global_position).normalized()
-	_vfx_wedge(dir, 160.0, 60.0, Color(0.75, 0.45, 0.95, 0.40), 0.22)
-	target.take_damage(_damage_for_hit(target, GameConfig.purple_dmg_mult))
 	_wizard_burst_count += 1
-	if _wizard_burst_count >= GameConfig.purple_burst_every_n_hits:
+	var is_burst: bool = _wizard_burst_count >= GameConfig.purple_burst_every_n_hits
+	if is_burst:
 		_wizard_burst_count = 0
-		_purple_arcane_burst(target)
+	var impact_world: Vector2 = target.global_position
+	var target_ref: Enemy = target
+	_vfx_arcane_orb(impact_world, is_burst, func():
+		if is_instance_valid(target_ref) and target_ref.hp > 0.0:
+			target_ref.take_damage(_damage_for_hit(target_ref, GameConfig.purple_dmg_mult))
+		_vfx_impact_sparks(impact_world,
+			Color(0.95, 0.70, 1.0, 1.0),
+			10 if is_burst else 6,
+			40.0 if is_burst else 28.0)
+		if is_burst:
+			_purple_arcane_burst_at(impact_world, target_ref)
+	)
 
 func _purple_arcane_burst(primary: Enemy) -> void:
-	var center: Vector2 = primary.global_position
+	_purple_arcane_burst_at(primary.global_position, primary)
+
+func _purple_arcane_burst_at(center: Vector2, primary: Enemy) -> void:
 	_vfx_aoe_ring(center, GameConfig.purple_aoe_radius_px, Color(0.85, 0.5, 1.0, 0.55))
 	var radius_sq: float = GameConfig.purple_aoe_radius_px * GameConfig.purple_aoe_radius_px
 	for e in enemy_lane.enemies:
@@ -723,6 +742,257 @@ func _spawn_arrow_streak(world_pos: Vector2, dir: Vector2, col: Color) -> void:
 	tw.parallel().tween_property(streak, "scale", Vector2(0.35, 0.35), 0.22)
 	tw.tween_callback(func():
 		if is_instance_valid(streak): streak.queue_free())
+
+# ─── Druid seed-pod ─ leaf-wrapped green pod lobbed hero → impact world point.
+# Mirrors the ice-lob bezier arc, but with leaf-shaped body + drifting leaf
+# trail. Calls `on_land` when the pod reaches the impact point.
+func _vfx_seed_pod(impact_world: Vector2, on_land: Callable) -> void:
+	if enemy_lane == null:
+		on_land.call()
+		return
+	var pod: Node2D = _make_seed_pod(11.0 * PROJECTILE_SCALE)
+	pod.z_index = 70
+	enemy_lane.add_child(pod)
+	var p0_local: Vector2 = enemy_lane.to_local(global_position)
+	var p2_local: Vector2 = enemy_lane.to_local(impact_world)
+	pod.position = p0_local
+	var mid: Vector2 = (p0_local + p2_local) * 0.5
+	mid.y -= 55.0
+	pod.scale = Vector2(0.5, 0.5)
+	var pop := pod.create_tween()
+	pop.tween_property(pod, "scale", Vector2(1.0, 1.0), 0.06).set_trans(Tween.TRANS_BACK)
+	var last_trail := [0.0]
+	var fly := create_tween()
+	fly.tween_method(func(t: float):
+		if not is_instance_valid(pod): return
+		var u: float = 1.0 - t
+		pod.position = u * u * p0_local + 2.0 * u * t * mid + t * t * p2_local
+		pod.rotation = (p2_local - p0_local).angle() + t * TAU * 0.8
+		if t - last_trail[0] >= 0.07:
+			last_trail[0] = t
+			_spawn_leaf_trail(enemy_lane.to_global(pod.position))
+	, 0.0, 1.0, 0.38)
+	fly.tween_callback(func():
+		if is_instance_valid(pod): pod.queue_free()
+		on_land.call())
+
+func _make_seed_pod(size: float) -> Node2D:
+	var holder := Node2D.new()
+	# Soft outer halo so the pod reads against any backdrop.
+	var halo := Polygon2D.new()
+	halo.color = Color(0.55, 1.0, 0.55, 0.32)
+	halo.polygon = _oval_points(size * 1.7, size * 1.2, 16)
+	holder.add_child(halo)
+	# Body — deep green pod.
+	var body := Polygon2D.new()
+	body.color = Color(0.30, 0.70, 0.32, 0.95)
+	body.polygon = _oval_points(size, size * 0.7, 14)
+	holder.add_child(body)
+	# Two leaf wings flanking the pod.
+	var leaf_l := Polygon2D.new()
+	leaf_l.color = Color(0.55, 0.92, 0.45, 0.95)
+	leaf_l.polygon = PackedVector2Array([
+		Vector2(-size * 0.2,  0.0),
+		Vector2(-size * 1.2, -size * 0.6),
+		Vector2(-size * 1.4,  0.0),
+		Vector2(-size * 1.2,  size * 0.4),
+	])
+	holder.add_child(leaf_l)
+	var leaf_r := Polygon2D.new()
+	leaf_r.color = Color(0.55, 0.92, 0.45, 0.95)
+	leaf_r.polygon = PackedVector2Array([
+		Vector2(size * 0.2,  0.0),
+		Vector2(size * 1.2, -size * 0.4),
+		Vector2(size * 1.4,  0.0),
+		Vector2(size * 1.2,  size * 0.6),
+	])
+	holder.add_child(leaf_r)
+	# Bright core highlight.
+	var core := Polygon2D.new()
+	core.color = Color(0.85, 1.0, 0.70, 0.95)
+	core.polygon = _oval_points(size * 0.42, size * 0.30, 10)
+	holder.add_child(core)
+	return holder
+
+func _oval_points(rx: float, ry: float, steps: int) -> PackedVector2Array:
+	var pts := PackedVector2Array()
+	for i in steps:
+		var a: float = TAU * float(i) / float(steps)
+		pts.append(Vector2(cos(a) * rx, sin(a) * ry))
+	return pts
+
+func _spawn_leaf_trail(world_pos: Vector2) -> void:
+	if enemy_lane == null:
+		return
+	var leaf := Polygon2D.new()
+	leaf.color = Color(0.55, 0.92, 0.45, 0.85)
+	var s: float = randf_range(2.4, 4.0)
+	leaf.polygon = PackedVector2Array([
+		Vector2(0, -s), Vector2(s * 0.6, 0), Vector2(0, s), Vector2(-s * 0.6, 0),
+	])
+	leaf.z_index = 55
+	enemy_lane.add_child(leaf)
+	leaf.position = enemy_lane.to_local(world_pos)
+	leaf.rotation = randf() * TAU
+	var drift: Vector2 = Vector2(randf_range(-6.0, 6.0), randf_range(2.0, 10.0))
+	var tw := leaf.create_tween()
+	tw.tween_property(leaf, "position", leaf.position + drift, 0.30)
+	tw.parallel().tween_property(leaf, "rotation", leaf.rotation + randf_range(-1.2, 1.2), 0.30)
+	tw.parallel().tween_property(leaf, "modulate:a", 0.0, 0.30)
+	tw.parallel().tween_property(leaf, "scale", Vector2(0.3, 0.3), 0.30)
+	tw.tween_callback(func():
+		if is_instance_valid(leaf): leaf.queue_free())
+
+# Small green poison cloud at the seed-pod impact point — drifts upward and fades.
+func _vfx_poison_puff(world_pos: Vector2) -> void:
+	if enemy_lane == null:
+		return
+	var local := enemy_lane.to_local(world_pos)
+	for i in 5:
+		var puff := Polygon2D.new()
+		puff.color = Color(0.50, 0.95, 0.45, 0.55)
+		var s: float = randf_range(6.0, 10.0)
+		puff.polygon = _oval_points(s, s * 0.85, 12)
+		puff.z_index = 58
+		enemy_lane.add_child(puff)
+		puff.position = local + Vector2(randf_range(-12.0, 12.0), randf_range(-6.0, 6.0))
+		puff.scale = Vector2(0.4, 0.4)
+		var dur: float = randf_range(0.40, 0.60)
+		var dest: Vector2 = puff.position + Vector2(randf_range(-8.0, 8.0), -randf_range(14.0, 26.0))
+		var tw := puff.create_tween()
+		tw.tween_property(puff, "scale", Vector2(1.1, 1.1), dur * 0.6).set_trans(Tween.TRANS_SINE)
+		tw.parallel().tween_property(puff, "position", dest, dur)
+		tw.parallel().tween_property(puff, "modulate:a", 0.0, dur)
+		tw.tween_callback(func():
+			if is_instance_valid(puff): puff.queue_free())
+
+# Green sparkle motes rising off a healed ally hero — quick "you got healed" tell.
+func _vfx_heal_motes(world_pos: Vector2) -> void:
+	if enemy_lane == null:
+		return
+	var parent: Node = enemy_lane.get_parent()
+	if parent == null:
+		return
+	for i in 5:
+		var mote := Polygon2D.new()
+		mote.color = Color(0.55, 1.0, 0.60, 0.95)
+		var s: float = randf_range(2.0, 3.5)
+		mote.polygon = PackedVector2Array([
+			Vector2(0, -s * 1.4),
+			Vector2(s * 0.6, 0),
+			Vector2(0, s * 1.4),
+			Vector2(-s * 0.6, 0),
+		])
+		mote.z_index = 80
+		parent.add_child(mote)
+		mote.position = parent.to_local(world_pos) + Vector2(randf_range(-14.0, 14.0), randf_range(-4.0, 4.0))
+		mote.rotation = randf() * TAU
+		var dest: Vector2 = mote.position + Vector2(randf_range(-6.0, 6.0), -randf_range(24.0, 38.0))
+		var dur: float = randf_range(0.45, 0.65)
+		var tw := mote.create_tween()
+		tw.tween_property(mote, "position", dest, dur).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.parallel().tween_property(mote, "modulate:a", 0.0, dur)
+		tw.parallel().tween_property(mote, "scale", Vector2(0.4, 0.4), dur)
+		tw.parallel().tween_property(mote, "rotation", mote.rotation + randf_range(-0.6, 0.6), dur)
+		tw.tween_callback(func():
+			if is_instance_valid(mote): mote.queue_free())
+
+# ─── Wizard arcane orb ─ purple orb fired straight at the target with a star
+# trail. Burst variant is bigger and brighter (every Nth shot). Calls `on_land`
+# at the impact point.
+func _vfx_arcane_orb(impact_world: Vector2, is_burst: bool, on_land: Callable) -> void:
+	if enemy_lane == null:
+		on_land.call()
+		return
+	var size: float = (10.0 if is_burst else 7.0) * PROJECTILE_SCALE
+	var orb: Node2D = _make_arcane_orb(size, is_burst)
+	orb.z_index = 75
+	enemy_lane.add_child(orb)
+	var p0: Vector2 = enemy_lane.to_local(global_position)
+	var p1: Vector2 = enemy_lane.to_local(impact_world)
+	var dir: Vector2 = (p1 - p0).normalized()
+	orb.position = p0
+	orb.rotation = dir.angle()
+	var flight_dur: float = clamp((p1 - p0).length() / 520.0, 0.22, 0.46)
+	var last_trail := [0.0]
+	var tw := create_tween()
+	tw.tween_method(func(t: float):
+		if not is_instance_valid(orb): return
+		orb.position = p0.lerp(p1, t)
+		if t - last_trail[0] >= 0.05:
+			last_trail[0] = t
+			_spawn_orb_trail(enemy_lane.to_global(orb.position), is_burst)
+	, 0.0, 1.0, flight_dur)
+	tw.tween_callback(func():
+		if is_instance_valid(orb): orb.queue_free()
+		on_land.call())
+
+func _make_arcane_orb(size: float, is_burst: bool) -> Node2D:
+	var holder := Node2D.new()
+	# Outer glow halo.
+	var halo := Polygon2D.new()
+	halo.color = Color(0.85, 0.55, 1.0, 0.32 if is_burst else 0.26)
+	halo.polygon = _oval_points(size * 2.0, size * 2.0, 18)
+	holder.add_child(halo)
+	# Mid-ring (saturated purple).
+	var ring := Polygon2D.new()
+	ring.color = Color(0.70, 0.40, 0.95, 0.85)
+	ring.polygon = _oval_points(size * 1.25, size * 1.25, 16)
+	holder.add_child(ring)
+	# Body (bright violet).
+	var body := Polygon2D.new()
+	body.color = Color(0.92, 0.70, 1.0, 0.95)
+	body.polygon = _oval_points(size, size, 14)
+	holder.add_child(body)
+	# White-hot core.
+	var core := Polygon2D.new()
+	core.color = Color(1.0, 0.96, 1.0, 1.0)
+	core.polygon = _oval_points(size * 0.42, size * 0.42, 10)
+	holder.add_child(core)
+	# Burst orbs get a 4-point star overlay so the "this one is special" reads
+	# at speed.
+	if is_burst:
+		var star := Polygon2D.new()
+		star.color = Color(1.0, 0.95, 1.0, 0.9)
+		var r: float = size * 1.6
+		var inner: float = size * 0.55
+		star.polygon = PackedVector2Array([
+			Vector2(0, -r), Vector2(inner * 0.7, -inner * 0.7),
+			Vector2(r, 0), Vector2(inner * 0.7, inner * 0.7),
+			Vector2(0, r), Vector2(-inner * 0.7, inner * 0.7),
+			Vector2(-r, 0), Vector2(-inner * 0.7, -inner * 0.7),
+		])
+		holder.add_child(star)
+	return holder
+
+func _spawn_orb_trail(world_pos: Vector2, is_burst: bool) -> void:
+	if enemy_lane == null:
+		return
+	var trail := Polygon2D.new()
+	trail.color = Color(0.90, 0.65, 1.0, 0.80 if is_burst else 0.65)
+	var s: float = randf_range(2.5, 4.0) * (1.25 if is_burst else 1.0)
+	# 4-point star sparkle.
+	trail.polygon = PackedVector2Array([
+		Vector2(0, -s * 1.5),
+		Vector2(s * 0.45, -s * 0.45),
+		Vector2(s * 1.5, 0),
+		Vector2(s * 0.45, s * 0.45),
+		Vector2(0, s * 1.5),
+		Vector2(-s * 0.45, s * 0.45),
+		Vector2(-s * 1.5, 0),
+		Vector2(-s * 0.45, -s * 0.45),
+	])
+	trail.z_index = 60
+	enemy_lane.add_child(trail)
+	trail.position = enemy_lane.to_local(world_pos)
+	trail.rotation = randf() * TAU
+	var dur: float = 0.30
+	var tw := trail.create_tween()
+	tw.tween_property(trail, "modulate:a", 0.0, dur)
+	tw.parallel().tween_property(trail, "scale", Vector2(0.2, 0.2), dur)
+	tw.parallel().tween_property(trail, "rotation", trail.rotation + randf_range(-0.8, 0.8), dur)
+	tw.tween_callback(func():
+		if is_instance_valid(trail): trail.queue_free())
 
 # ─── Draw ──────────────────────────────────────────────────────────
 func _draw() -> void:
