@@ -489,11 +489,30 @@ func _build_spawn_button(parent: Node2D) -> void:
 	spawn_button_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	spawn_button_label.text = "SPAWN HERO"
 	spawn_button_root.add_child(spawn_button_label)
-	# Cost "🪙 30".
-	spawn_button_cost_label = _hud_label_at(Vector2(0, 50), 22, Color(1, 0.95, 0.6, 1))
+	# Cost: drawn coin disc + number (the 🪙 emoji glyph isn't in the HUD font).
+	var cost_cx: float = BB_SPAWN_BTN_W * 0.5 - 20.0
+	var cost_cy: float = 62.0
+	var cost_r: float = 11.0
+	var coin := Polygon2D.new()
+	coin.color = BB_GOLD
+	var pts := PackedVector2Array()
+	for i in range(20):
+		var ang: float = TAU * float(i) / 20.0
+		pts.append(Vector2(cost_cx + cos(ang) * cost_r, cost_cy + sin(ang) * cost_r))
+	coin.polygon = pts
+	spawn_button_root.add_child(coin)
+	var coin_inner := Polygon2D.new()
+	coin_inner.color = Color(0.85, 0.62, 0.18, 1.0)
+	var pts_inner := PackedVector2Array()
+	for i in range(20):
+		var ang: float = TAU * float(i) / 20.0
+		pts_inner.append(Vector2(cost_cx + cos(ang) * cost_r * 0.62, cost_cy + sin(ang) * cost_r * 0.62))
+	coin_inner.polygon = pts_inner
+	spawn_button_root.add_child(coin_inner)
+	spawn_button_cost_label = _hud_label_at(Vector2(16, 50), 22, Color(1, 0.95, 0.6, 1))
 	spawn_button_cost_label.size = Vector2(BB_SPAWN_BTN_W, 28)
 	spawn_button_cost_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	spawn_button_cost_label.text = "🪙 %d" % GameConfig.hero_spawn_cost
+	spawn_button_cost_label.text = "%d" % GameConfig.hero_spawn_cost
 	spawn_button_root.add_child(spawn_button_cost_label)
 
 func _flash_spawn_button_denied() -> void:

@@ -40,6 +40,7 @@ func init_boss(cfg: Dictionary) -> void:
 
 	max_hp = float(GameConfig.boss_hp)
 	hp = max_hp
+	currency_value = GameConfig.currency_for_hp(max_hp)
 	color_speed_mult = GameConfig.boss_walk_speed_mult
 	color_dmg_base = GameConfig.boss_base_damage
 	color_dmg_hero = 0   # Corrupter doesn't melee heroes — it walks past them straight to the tower

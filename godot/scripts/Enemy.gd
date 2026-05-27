@@ -57,6 +57,7 @@ var max_hp: float = 50.0
 var color_speed_mult: float = 1.0
 var color_dmg_base: int = 20
 var color_dmg_hero: int = 10
+var currency_value: int = 0   # currency granted on kill (base HP, no wave mult)
 
 # Path state
 var column: int = 0
@@ -114,6 +115,9 @@ func init_enemy(cfg: Dictionary) -> void:
 	var dmg_mult: float = GameConfig.enemy_dmg_mult_for_wave(w) * float(var_stats.dmg_mult)
 	max_hp = float(stats.hp) * hp_mult
 	hp = max_hp
+	# Currency reward off BASE HP (color × variant), excluding the wave HP
+	# multiplier — same enemy pays the same bounty in every wave.
+	currency_value = GameConfig.currency_for_hp(float(stats.hp) * float(var_stats.hp_mult))
 	color_speed_mult = float(stats.speed) * float(var_stats.speed_mult)
 	color_dmg_base = int(round(stats.dmg_base * dmg_mult))
 	color_dmg_hero = int(round(stats.dmg_hero * dmg_mult))

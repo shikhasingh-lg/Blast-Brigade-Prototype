@@ -7,7 +7,13 @@ extends Node
 # currency_per_kill. Spawning a hero costs hero_spawn_cost.
 @export var starting_currency: int = 60
 @export var hero_spawn_cost: int = 30
-@export var currency_per_kill: int = 12
+# Currency on kill scales with the enemy's max HP, anchored so base RED
+# (70 HP) yields 6. Tankier/variant/boss enemies pay proportionally more;
+# wave HP multipliers carry through, so the same enemy pays more in later waves.
+@export var currency_per_hp: float = 6.0 / 70.0
+
+func currency_for_hp(hp: float) -> int:
+	return max(1, int(round(hp * currency_per_hp)))
 
 # ─── Gate (kept for column geometry only — Blast Brigade doesn't seed bubbles) ─
 @export var gate_columns: int = 11   # spans 11*60 = 660px of 720 vp → ~30px margin each side
@@ -25,7 +31,7 @@ extends Node
 @export var num_waves: int = 5
 @export var moves_per_wave: Array[int] = [10, 6, 6, 6, 6]
 @export var intermission_duration_sec: float = 5.0
-@export var pre_run_countdown_sec: float = 10.0   # Wave 1 "Get Ready" — longer than intermission to let player plan
+@export var pre_run_countdown_sec: float = 3.0   # Wave 1 "Get Ready" — quick start
 
 @export var gate_seed_rows_per_wave: Array[int] = [4, 5, 6, 7, 8]
 # Explicit per-wave hero count — capped at 3, decreasing curve so later waves
@@ -73,11 +79,11 @@ func enemy_dmg_mult_for_wave(idx: int) -> float:
 # wave-over-wave. Wave 5 (idx 4) is the miniboss wave on Stage 1 so its totals
 # only apply on stages 2+.
 const SPAWN_TOTALS: Array = [
-	{"RED": 12},                          # was {RED 5}   → 12
-	{"RED": 9, "BLUE": 5},                # was 6         → 14
-	{"RED": 10, "BLUE": 6, "YELLOW": 4},  # was 9         → 20
-	{"RED": 11, "BLUE": 7, "YELLOW": 6},  # was 11        → 24
-	{"RED": 12, "BLUE": 8, "YELLOW": 8},  # was 14        → 28
+	{"RED": 12},                                                # 12
+	{"RED": 9, "BLUE": 5},                                      # 14
+	{"RED": 8, "BLUE": 5, "YELLOW": 4, "GREEN": 4},             # 21  (GREEN introduced)
+	{"RED": 8, "BLUE": 6, "YELLOW": 5, "GREEN": 4, "PURPLE": 3},# 26  (PURPLE introduced)
+	{"RED": 9, "BLUE": 7, "YELLOW": 6, "GREEN": 5, "PURPLE": 4},# 31  (full 5-color)
 ]
 
 # ─── Wave-1 cluster test (Test C) ───────────────────────────────────
@@ -106,9 +112,13 @@ func forced_brutes_for_wave(idx: int) -> int:
 @export var enemy_dmg_mult_per_wave: Array[float] = [1.0, 1.0, 1.05, 1.1, 1.2]
 
 # HP = original (50/80/120) +40%. RED no longer one-shots a 60-dmg bomb.
+# GREEN = fast medium swarmer, PURPLE = slow tanky caster. Both counter their
+# same-color hero (Druid / Wizard) via color_counter_mult.
 const ENEMY_STATS: Dictionary = {
 	"RED":    {"hp": 70,  "speed": 1.0,  "dmg_hero": 10, "dmg_base": 20},
+	"GREEN":  {"hp": 90,  "speed": 0.90, "dmg_hero": 10, "dmg_base": 20},
 	"BLUE":   {"hp": 112, "speed": 0.67, "dmg_hero": 10, "dmg_base": 20},
+	"PURPLE": {"hp": 140, "speed": 0.60, "dmg_hero": 20, "dmg_base": 30},
 	"YELLOW": {"hp": 168, "speed": 0.83, "dmg_hero": 15, "dmg_base": 25},
 }
 

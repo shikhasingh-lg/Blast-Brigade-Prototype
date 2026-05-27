@@ -6,6 +6,10 @@ class_name EnemyLane
 signal enemy_reached_base(damage: int)
 signal wave_cleared
 
+# Lead before the first spawn of a wave — small so action starts right after
+# the countdown instead of mid-wave.
+const SPAWN_LEAD_SEC: float = 0.3
+
 var gate_ref: Gate
 var hero_row_ref: HeroRow
 var lane_top_y: float = 0.0
@@ -92,7 +96,9 @@ func _build_spawn_queue(idx: int) -> Array:
 		var num_clusters: int = int(ceil(float(n) / float(cluster_size)))
 		var cols_per_cluster: int = GameConfig.cluster_columns_for_wave(idx)
 		for ci in range(num_clusters):
-			var t: float = duration * float(ci + 1) / float(num_clusters + 1)
+			# Start the first cluster almost immediately (0.3s lead), then space
+			# the rest evenly across the wave window — no dead air after countdown.
+			var t: float = SPAWN_LEAD_SEC + (duration - SPAWN_LEAD_SEC) * float(ci) / float(max(1, num_clusters))
 			var cluster_cols: Array = _pick_cluster_columns(cols_per_cluster)
 			var start: int = ci * cluster_size
 			var end: int = min(start + cluster_size, n)
@@ -103,7 +109,7 @@ func _build_spawn_queue(idx: int) -> Array:
 				q.append({"t": t, "color": colors[i], "variant": variants[i], "column": col})
 	else:
 		for i in range(n):
-			var t: float = duration * float(i + 1) / float(n + 1)
+			var t: float = SPAWN_LEAD_SEC + (duration - SPAWN_LEAD_SEC) * float(i) / float(max(1, n))
 			q.append({"t": t, "color": colors[i], "variant": variants[i], "column": -1})
 	return q
 
@@ -242,8 +248,8 @@ func _on_enemy_died(e: Enemy) -> void:
 	VFX.play("enemy_hit", e.global_position, {"color": e.color})
 	SFX.play("enemy_death")
 	enemies.erase(e)
-	# Blast Brigade — kill grants currency for hero spawn.
-	RunState.grant_currency(GameConfig.currency_per_kill)
+	# Blast Brigade — kill grants currency scaled to the enemy's base HP.
+	RunState.grant_currency(e.currency_value)
 
 func _on_enemy_breached(e: Enemy) -> void:
 	Telemetry.enemy_breach(e.column, gate_ref.column_state(e.column), false)
